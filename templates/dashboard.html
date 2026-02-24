@@ -1,0 +1,15 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Dashboard</title>
+</head>
+<body>
+    <h1>Welcome, {{ username }}</h1>
+    <p>Use the navigation below to manage your profile.</p>
+
+    <ul>
+        <li><a href="{{ url_for('profile') }}">Create/Update Profile</a></li>
+        <li><a href="{{ url_for('logout') }}">Logout</a></li>
+    </ul>
+</body>
+</html>
