@@ -4,18 +4,23 @@ from typing import Optional, Tuple, Union
 from flask import Flask, render_template, request, redirect, url_for, session, jsonify, Response
 from flask.typing import ResponseReturnValue
 import firebase_admin
-from firebase_admin import credentials, firestore
+from firebase_admin import credentials, firestore, auth
 from firebase_admin.firestore import DocumentReference
 import os
+import requests
 
 app = Flask(__name__)
 app.config["SECRET_KEY"] = os.getenv("FLASK_SECRET_KEY", "dev-secret-key")
 
-# A dummy user for the login. 
+WEB_API_KEY = os.environ.get("FIREBASE_WEB_API_KEY")
+
+"""
+# A dummy user for the login... i replaced every other instance of 'username' with 'email', so this is no longer needed.
 dummy_user = {
     "username": "student",
     "password": "secret"
 }
+"""
 
 # Initialize Firestore
 if not firebase_admin._apps:
@@ -25,32 +30,38 @@ if not firebase_admin._apps:
 db = firestore.client()
 
 def get_current_user():
-    """Return the currently logged-in username (or None).
+    """Return the currently logged-in email (or None).
 
     Uses session data set during `/login`. This keeps all login checks
     consistent in one place.
     """
     if not session.get("logged_in"):
         return None
-    return session.get("username")
+    return session.get("email")
 
 
 def get_user_or_401():
-    """Return the current API user or an Unauthorized response."""
-    current_user = get_current_user()
-    if not current_user:
-        return jsonify({"error": "Unauthorized"}), 401
-    return current_user
+    """Return the current API user (uid) or an Unauthorized response."""
+    # Try to get JWT from Authorization header
+    auth_header = request.headers.get("Authorization")
+    if not auth_header or not auth_header.startswith("Bearer "):
+        return jsonify({"error": "Unauthorized: Missing or invalid Authorization header"}), 401
+    token = auth_header.split(" ", 1)[1]
+    try:
+        decoded_token = auth.verify_id_token(token)
+        return decoded_token["uid"]
+    except Exception as e:
+        return jsonify({"error": f"Unauthorized: {str(e)}"}), 401
 
 
-def get_profile_doc_ref(username: str):
+def get_profile_doc_ref(email: str):
     """Get the Firestore document reference for a user's profile."""
-    return db.collection("profiles").document(username)
+    return db.collection("profiles").document(email)
 
 
-def get_profile_data(username: str):
+def get_profile_data(email: str):
     """Fetch a user's profile from Firestore, returning an empty dict if missing."""
-    doc = get_profile_doc_ref(username).get()
+    doc = get_profile_doc_ref(email).get()
     return doc.to_dict() if doc.exists else {}
 
 
@@ -77,41 +88,108 @@ def require_json_content_type():
     return None
 
 
-def set_profile(username: str, profile_data: dict[str, str], *, merge: bool):
+def set_profile(email: str, profile_data: dict[str, str], *, merge: bool):
     """Persist profile data to Firestore.
 
     Args:
-        username: Profile owner.
+        email: Profile owner.
         profile_data: Data to write.
         merge: When True, merges into existing document (partial update).
     """
-    get_profile_doc_ref(username).set(profile_data, merge=merge)
+    get_profile_doc_ref(email).set(profile_data, merge=merge)
 
 # --- Web Routes ---
+
+@app.route("/signup", methods=["GET", "POST"])
+def signup():
+    """Signup page: create a new user and profile."""
+    if request.method == "GET":
+        return render_template("signup.html")
+
+    email = request.form.get("email")
+    password = request.form.get("password")
+    confirm_password = request.form.get("confirm_password")
+
+    if password != confirm_password:
+        return render_template("signup.html", error="Passwords do not match")
+
+    try:
+        user = auth.create_user(email=email, password=password)
+        db.collection("profiles").document(user.uid).set({
+            "email": email,
+            "role": "user"
+        })
+        return redirect(url_for("login"))
+    except Exception as e:
+        return render_template("signup.html", error=f"Signup failed: {str(e)}")
+
+
+@app.route("/signup", methods=["POST"])
+def api_signup():
+    """API endpoint to create a user and profile."""
+    data = request.get_json(silent=True) or {}
+    email = data.get("email")
+    password = data.get("password")
+    confirm_password = data.get("confirm_password")
+
+    if password != confirm_password:
+        return jsonify({"error": "Passwords do not match"}), 400
+
+    try:
+        user = auth.create_user(email=email, password=password)
+        db.collection("profiles").document(user.uid).set({
+            "email": email,
+            "role": "user"
+        })
+        return jsonify({"message": "Signup successful"}), 200
+    except Exception as e:
+        return jsonify({"error": f"Signup failed: {str(e)}"}), 400
+
+
+@app.route("/api/login", methods=["POST"])
+def api_login():
+    """API endpoint to log in and return JWT."""
+    data = request.get_json(silent=True) or {}
+    email = data.get("email")
+    password = data.get("password")
+    if not email or not password:
+        return jsonify({"error": "Email and password required"}), 400
+    url = f"https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key={WEB_API_KEY}"
+    payload = {"email": email, "password": password, "returnSecureToken": True}
+    res = requests.post(url, json=payload)
+    if res.status_code == 200:
+        return jsonify({"token": res.json()["idToken"]}), 200
+    return jsonify({"error": "Invalid credentials"}), 401
+
 
 @app.route("/")
 def home():
     """Home page. Redirects to login if no active session."""
     current_user = get_current_user()
     if current_user:
-        return render_template("dashboard.html", username=current_user)
+        return render_template("dashboard.html", email=current_user)
     return redirect(url_for("login"))
 
 
 @app.route("/login", methods=["GET", "POST"])
 def login():
-    """Login page (dummy credentials for the lab)."""
+    """Login page using Firebase REST API for authentication."""
     if request.method == "GET":
         return render_template("login.html")
 
-    username = request.form.get("username")
+    email = request.form.get("email")  # Email field
     password = request.form.get("password")
 
-    if username == dummy_user["username"] and password == dummy_user["password"]:
-        session["logged_in"] = True
-        session["username"] = username
-        return redirect(url_for("home"))
+    if not email or not password:
+        return render_template("login.html", error="Email and password required.")
 
+    url = f"https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key={WEB_API_KEY}"
+    payload = {"email": email, "password": password, "returnSecureToken": True}
+    res = requests.post(url, json=payload)
+    if res.status_code == 200:
+        session["logged_in"] = True
+        session["email"] = email
+        return redirect(url_for("home"))
     return render_template("login.html", error="Invalid credentials. Try again.")
 
 
@@ -156,9 +234,9 @@ def api_get_profile():
     if not isinstance(user_or_response, str):
         return user_or_response
 
-    username = user_or_response
-    profile_data = get_profile_data(username)
-    return jsonify({"username": username, "profile": profile_data}), 200
+    email = user_or_response
+    profile_data = get_profile_data(email)
+    return jsonify({"email": email, "profile": profile_data}), 200
 
 
 @app.post("/api/profile")
@@ -168,7 +246,7 @@ def api_create_profile():
     if not isinstance(user_or_response, str):
         return user_or_response
 
-    username = user_or_response
+    email = user_or_response
     content_error = require_json_content_type()
     if content_error:
         return content_error
@@ -183,7 +261,7 @@ def api_create_profile():
         return jsonify({"error": error}), 400
 
     normalized = normalize_profile_data(first_name, last_name, student_id)
-    set_profile(username, normalized, merge=False)
+    set_profile(email, normalized, merge=False)
     return jsonify({"message": "Profile saved successfully", "profile": normalized}), 200
 
 
@@ -194,7 +272,7 @@ def api_update_profile():
     if not isinstance(user_or_response, str):
         return user_or_response
 
-    username = user_or_response
+    email = user_or_response
     content_error = require_json_content_type()
     if content_error:
         return content_error
@@ -220,9 +298,9 @@ def api_update_profile():
         return jsonify({"error": "No updatable fields provided"}), 400
 
     # Merge update into existing document (or create if missing).
-    set_profile(username, update_data, merge=True)
+    set_profile(email, update_data, merge=True)
 
-    updated_profile = get_profile_data(username)
+    updated_profile = get_profile_data(email)
     return jsonify({"message": "Profile updated successfully", "profile": updated_profile}), 200
 
 
@@ -233,8 +311,8 @@ def api_delete_profile():
     if not isinstance(user_or_response, str):
         return user_or_response
 
-    username = user_or_response
-    get_profile_doc_ref(username).delete()
+    email = user_or_response
+    get_profile_doc_ref(email).delete()
     return jsonify({"message": "Profile deleted successfully"}), 200
 
 
