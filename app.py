@@ -1,5 +1,6 @@
+#app.py
 from __future__ import annotations
-
+from functools import wraps
 from typing import Optional, Tuple, Union
 from flask import Flask, render_template, request, redirect, url_for, session, jsonify, Response
 from flask.typing import ResponseReturnValue
@@ -97,6 +98,20 @@ def set_profile(email: str, profile_data: dict[str, str], *, merge: bool):
         merge: When True, merges into existing document (partial update).
     """
     get_profile_doc_ref(email).set(profile_data, merge=merge)
+    return None
+    
+def set_sensor_value(sensor_id: str, value: float, timestamp: str):
+    db.collection("sensors").document(sensor_id).set({
+        "value": value,
+        "timestamp": timestamp
+    })
+    return None
+
+def get_sensor_value(sensor_id: str):
+    doc = db.collection("sensors").document(sensor_id).get()
+    if doc.exists:
+        return doc.to_dict()
+    return {"value": None, "timestamp": None}
 
 # --- Web Routes ---
 
@@ -164,10 +179,12 @@ def api_login():
 
 @app.route("/")
 def home():
-    """Home page. Redirects to login if no active session."""
+    """Home page. Redirects to login if no active session. Displays user profile info and sensor value if logged in."""
     current_user = get_current_user()
     if current_user:
-        return render_template("dashboard.html", email=current_user)
+        profile_data = get_profile_data(current_user)
+        sensor_data = get_sensor_value("sensor-001")
+        return render_template("dashboard.html", username=current_user, profile=profile_data, sensor=sensor_data)
     return redirect(url_for("login"))
 
 
@@ -316,5 +333,33 @@ def api_delete_profile():
     return jsonify({"message": "Profile deleted successfully"}), 200
 
 
+def require_api_key(f):
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        expected_key = os.environ.get("SENSOR_API_KEY")
+        provided_key = request.headers.get("X-API-Key")
+        if not provided_key or provided_key != expected_key:
+            return jsonify({"error": "Unauthorized"}), 401
+        return f(*args, **kwargs)
+    return decorated_function
+
+
+@app.route("/api/sensor_data", methods=["POST"])
+@require_api_key
+def sensor_data():
+    data = request.get_json(silent=True) or {}
+    sensor_id = data.get("sensor_id", "sensor-001")
+    value = data.get("value")
+    timestamp = data.get("timestamp")
+    set_sensor_value(sensor_id, value, timestamp)
+    return jsonify({"received": data}), 200
+
+@app.route("/api/sensor_value", methods=["GET"])
+def api_get_sensor_value():
+    sensor_id = request.args.get("sensor_id", "sensor-001")
+    sensor_data = get_sensor_value(sensor_id)
+    return jsonify(sensor_data), 200
+
+#------------------------------------------------------------------
 if __name__ == "__main__":
     app.run(debug=True, port=5000)

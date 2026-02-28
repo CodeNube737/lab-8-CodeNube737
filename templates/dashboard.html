@@ -7,9 +7,31 @@
     <h1>Welcome, {{ username }}</h1>
     <p>Use the navigation below to manage your profile.</p>
 
+    {% if profile %}
+    <div style="margin: 20px auto; width: 300px; border: 1px solid #ccc; border-radius: 8px; padding: 16px; background: #f9f9f9;">
+        <h2 style="margin-top:0;">Your Profile</h2>
+        <p><strong>First Name:</strong> {{ profile.first_name }}</p>
+        <p><strong>Last Name:</strong> {{ profile.last_name }}</p>
+        <p><strong>Student ID:</strong> {{ profile.student_id }}</p>
+    </div>
+    {% endif %}
+
     <ul>
         <li><a href="{{ url_for('profile') }}">Create/Update Profile</a></li>
         <li><a href="{{ url_for('logout') }}">Logout</a></li>
     </ul>
+
+    <div style="margin-top:40px; text-align:center;">
+        <svg width="100" height="100" viewBox="0 0 100 100">
+            <circle cx="50" cy="50" r="40" fill="#e0e0e0" stroke="#888" stroke-width="3"/>
+            <rect x="40" y="30" width="20" height="40" fill="#4caf50" rx="5"/>
+            <text x="50" y="55" font-size="18" text-anchor="middle" fill="#fff">S</text>
+        </svg>
+        <div style="font-size:1.5em; margin-top:10px;">
+            <span style="font-weight:bold; color:#4caf50;">Sensor Value:</span>
+            <span style="color:#222;">{{ sensor.value if sensor and sensor.value is not none else 'N/A' }}</span>
+        </div>
+        <div style="color:#888; font-size:0.9em;">Last updated: {{ sensor.timestamp if sensor and sensor.timestamp else 'Never' }}</div>
+    </div>
 </body>
 </html>
