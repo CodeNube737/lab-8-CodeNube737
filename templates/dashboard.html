@@ -3,12 +3,12 @@
 <head>
     <title>Dashboard</title>
 </head>
-<body>
+<body style="text-align:center;">
     <h1>Welcome, {{ username }}</h1>
     <p>Use the navigation below to manage your profile.</p>
 
     {% if profile %}
-    <div style="margin: 20px auto; width: 300px; border: 1px solid #ccc; border-radius: 8px; padding: 16px; background: #f9f9f9;">
+    <div style="margin: 20px auto; width: 300px; border: 1px solid #ccc; border-radius: 8px; padding: 16px; background: #f9f9f9; text-align:center;">
         <h2 style="margin-top:0;">Your Profile</h2>
         <p><strong>First Name:</strong> {{ profile.first_name }}</p>
         <p><strong>Last Name:</strong> {{ profile.last_name }}</p>
@@ -16,7 +16,7 @@
     </div>
     {% endif %}
 
-    <ul>
+    <ul style="display:inline-block; text-align:left; margin:auto;">
         <li><a href="{{ url_for('profile') }}">Create/Update Profile</a></li>
         <li><a href="{{ url_for('logout') }}">Logout</a></li>
     </ul>
@@ -29,9 +29,21 @@
         </svg>
         <div style="font-size:1.5em; margin-top:10px;">
             <span style="font-weight:bold; color:#4caf50;">Sensor Value:</span>
-            <span style="color:#222;">{{ sensor.value if sensor and sensor.value is not none else 'N/A' }}</span>
+            <span id="sensor-value" style="color:#222;">{{ sensor.value if sensor and sensor.value is not none else 'N/A' }}</span>
         </div>
-        <div style="color:#888; font-size:0.9em;">Last updated: {{ sensor.timestamp if sensor and sensor.timestamp else 'Never' }}</div>
+        <div style="color:#888; font-size:0.9em;">Last updated: <span id="sensor-timestamp">{{ sensor.timestamp if sensor and sensor.timestamp else 'Never' }}</span></div>
+        <button onclick="refreshSensor()" style="margin-top:20px; padding:8px 16px; font-size:1em;">Refresh Sensor</button>
     </div>
+
+    <script>
+    function refreshSensor() {
+        fetch('/api/sensor_value?sensor_id=sensor-001')
+            .then(response => response.json())
+            .then(data => {
+                document.getElementById('sensor-value').textContent = data.value !== null ? data.value : 'N/A';
+                document.getElementById('sensor-timestamp').textContent = data.timestamp || 'Never';
+            });
+    }
+    </script>
 </body>
 </html>
