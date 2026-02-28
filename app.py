@@ -390,5 +390,55 @@ def api_get_sensor_value():
     return jsonify(sensor_data), 200
 
 #------------------------------------------------------------------
+# Future work: Sensor Assignment & Access Control
+# These dummy functions are for future implementation and do NOT affect current app behavior.
+#
+# Firestore changes required:
+# - Add a 'sensors' field (list of sensor IDs) to each user profile document.
+#   Example: { ..., "sensors": ["sensor-001", "sensor-002"] }
+# - Optionally, create a 'sensor_permissions' collection to map sensors to allowed UIDs.
+
+def assign_sensor_to_user(uid: str, sensor_id: str):
+    """
+    FUTURE: Assign a sensor to a user by adding the sensor_id to their profile's 'sensors' list in Firestore.
+    Firestore change: Add or update the 'sensors' field in the user's profile document.
+    """
+    # Example Firestore update (not active):
+    # db.collection("profiles").document(uid).update({"sensors": firestore.ArrayUnion([sensor_id])})
+    pass
+
+
+def get_user_sensors(uid: str):
+    """
+    FUTURE: Retrieve the list of sensor IDs assigned to a user from their profile document.
+    Firestore change: Ensure 'sensors' field exists in profile documents.
+    """
+    # Example Firestore read (not active):
+    # doc = db.collection("profiles").document(uid).get()
+    # return doc.to_dict().get("sensors", []) if doc.exists else []
+    pass
+
+
+def user_can_access_sensor(uid: str, sensor_id: str) -> bool:
+    """
+    FUTURE: Check if a user has permission to access a given sensor.
+    Firestore change: Use 'sensors' field in profile, or a 'sensor_permissions' collection.
+    """
+    # Example logic (not active):
+    # sensors = get_user_sensors(uid)
+    # return sensor_id in sensors
+    pass
+
+
+def remove_sensor_from_user(uid: str, sensor_id: str):
+    """
+    FUTURE: Remove a sensor assignment from a user in Firestore.
+    Firestore change: Update the 'sensors' field in the user's profile document.
+    """
+    # Example Firestore update (not active):
+    # db.collection("profiles").document(uid).update({"sensors": firestore.ArrayRemove([sensor_id])})
+    pass
+
+#------------------------------------------------------------------
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
