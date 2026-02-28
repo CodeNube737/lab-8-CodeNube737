@@ -1,5 +1,27 @@
+# Python
 .venv/
 __pycache__/
 *.py[cod]
+*.pyc
+*.pyo
+*.pyd
+
+# Environment
 .env
+
+# Firebase/Google Cloud secrets
 serviceAccountKey.json
+*.json
+
+# VS Code
+.vscode/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Other
+*.log
+
+# Hide sensor_client.py if it contains secrets... it doesn't - MR
+#sensor_client.py
