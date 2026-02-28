@@ -17,6 +17,7 @@ WEB_API_KEY = os.environ.get("FIREBASE_WEB_API_KEY")
 
 """
 # A dummy user for the login... i replaced every other instance of 'username' with 'email', so this is no longer needed.
+# okay, so it should actually be the uid, not the email
 dummy_user = {
     "username": "student",
     "password": "secret"
@@ -55,14 +56,14 @@ def get_user_or_401():
         return jsonify({"error": f"Unauthorized: {str(e)}"}), 401
 
 
-def get_profile_doc_ref(email: str):
-    """Get the Firestore document reference for a user's profile."""
-    return db.collection("profiles").document(email)
+def get_profile_doc_ref(uid: str):
+    """Get the Firestore document reference for a user's profile by UID."""
+    return db.collection("profiles").document(uid)
 
 
-def get_profile_data(email: str):
+def get_profile_data(uid: str):
     """Fetch a user's profile from Firestore, returning an empty dict if missing."""
-    doc = get_profile_doc_ref(email).get()
+    doc = get_profile_doc_ref(uid).get()
     return doc.to_dict() if doc.exists else {}
 
 
@@ -89,15 +90,15 @@ def require_json_content_type():
     return None
 
 
-def set_profile(email: str, profile_data: dict[str, str], *, merge: bool):
-    """Persist profile data to Firestore.
+def set_profile(uid: str, profile_data: dict[str, str], *, merge: bool):
+    """Persist profile data to Firestore by UID.
 
     Args:
-        email: Profile owner.
+        uid: Profile owner (Firebase UID).
         profile_data: Data to write.
         merge: When True, merges into existing document (partial update).
     """
-    get_profile_doc_ref(email).set(profile_data, merge=merge)
+    get_profile_doc_ref(uid).set(profile_data, merge=merge)
     return None
     
 def set_sensor_value(sensor_id: str, value: float, timestamp: str):
@@ -182,7 +183,13 @@ def home():
     """Home page. Redirects to login if no active session. Displays user profile info and sensor value if logged in."""
     current_user = get_current_user()
     if current_user:
-        profile_data = get_profile_data(current_user)
+        # Get UID for current_user (email)
+        try:
+            user_record = auth.get_user_by_email(current_user)
+            uid = user_record.uid
+        except Exception:
+            uid = None
+        profile_data = get_profile_data(uid) if uid else {}
         sensor_data = get_sensor_value("sensor-001")
         return render_template("dashboard.html", username=current_user, profile=profile_data, sensor=sensor_data)
     return redirect(url_for("login"))
@@ -219,13 +226,20 @@ def logout():
 
 @app.route("/profile", methods=["GET", "POST"])
 def profile():
-    """HTML form to create/update the current user's profile."""
+    """HTML form to create/update the current user's profile using UID as key."""
     current_user = get_current_user()
     if not current_user:
         return redirect(url_for("login"))
 
+    # Get UID for current_user (email)
+    try:
+        user_record = auth.get_user_by_email(current_user)
+        uid = user_record.uid
+    except Exception:
+        uid = None
+
     if request.method == "GET":
-        profile_data = get_profile_data(current_user)
+        profile_data = get_profile_data(uid) if uid else {}
         return render_template("profile.html", profile=profile_data, error=None)
 
     first_name = request.form.get("first_name", "")
@@ -238,7 +252,7 @@ def profile():
         return render_template("profile.html", profile=profile_data, error=error)
 
     normalized = normalize_profile_data(first_name, last_name, student_id)
-    set_profile(current_user, normalized, merge=False)
+    set_profile(uid, normalized, merge=False)
     return redirect(url_for("home"))
 
 
@@ -251,9 +265,9 @@ def api_get_profile():
     if not isinstance(user_or_response, str):
         return user_or_response
 
-    email = user_or_response
-    profile_data = get_profile_data(email)
-    return jsonify({"email": email, "profile": profile_data}), 200
+    uid = user_or_response
+    profile_data = get_profile_data(uid)
+    return jsonify({"uid": uid, "profile": profile_data}), 200
 
 
 @app.post("/api/profile")
@@ -263,7 +277,7 @@ def api_create_profile():
     if not isinstance(user_or_response, str):
         return user_or_response
 
-    email = user_or_response
+    uid = user_or_response
     content_error = require_json_content_type()
     if content_error:
         return content_error
@@ -278,18 +292,18 @@ def api_create_profile():
         return jsonify({"error": error}), 400
 
     normalized = normalize_profile_data(first_name, last_name, student_id)
-    set_profile(email, normalized, merge=False)
+    set_profile(uid, normalized, merge=False)
     return jsonify({"message": "Profile saved successfully", "profile": normalized}), 200
 
 
 @app.put("/api/profile")
 def api_update_profile():
-    """Update the current user's profile from a JSON body."""
+    """Update the current user's profile from a JSON body with robust validation."""
     user_or_response = get_user_or_401()
     if not isinstance(user_or_response, str):
         return user_or_response
 
-    email = user_or_response
+    uid = user_or_response
     content_error = require_json_content_type()
     if content_error:
         return content_error
@@ -298,26 +312,41 @@ def api_update_profile():
     if not data:
         return jsonify({"error": "Request body cannot be empty"}), 400
 
+    allowed_fields = {"first_name", "last_name", "student_id"}
+    errors = []
+    update_data = {}
+
+    # Whitelist check
+    for key in data:
+        if key not in allowed_fields:
+            errors.append(f"Field '{key}' is not allowed.")
+
+    # Bounds checking
     first_name = data.get("first_name")
     last_name = data.get("last_name")
     student_id = data.get("student_id")
 
-    # Prepare the update data (only include provided fields)
-    update_data = {}
     if first_name is not None:
-        update_data["first_name"] = first_name.strip() if first_name else ""
+        if len(first_name.strip()) > 50:
+            errors.append("First name must be ≤ 50 characters.")
+        update_data["first_name"] = first_name.strip()
     if last_name is not None:
-        update_data["last_name"] = last_name.strip() if last_name else ""
+        if len(last_name.strip()) > 50:
+            errors.append("Last name must be ≤ 50 characters.")
+        update_data["last_name"] = last_name.strip()
     if student_id is not None:
-        update_data["student_id"] = str(student_id).strip() if student_id else ""
+        sid = str(student_id).strip()
+        if not (sid.isalnum() and len(sid) in [8,9]):
+            errors.append("Student ID must be 8 or 9 alphanumeric characters.")
+        update_data["student_id"] = sid
 
+    if errors:
+        return jsonify({"errors": errors}), 400
     if not update_data:
         return jsonify({"error": "No updatable fields provided"}), 400
 
-    # Merge update into existing document (or create if missing).
-    set_profile(email, update_data, merge=True)
-
-    updated_profile = get_profile_data(email)
+    set_profile(uid, update_data, merge=True)
+    updated_profile = get_profile_data(uid)
     return jsonify({"message": "Profile updated successfully", "profile": updated_profile}), 200
 
 
@@ -328,8 +357,8 @@ def api_delete_profile():
     if not isinstance(user_or_response, str):
         return user_or_response
 
-    email = user_or_response
-    get_profile_doc_ref(email).delete()
+    uid = user_or_response
+    get_profile_doc_ref(uid).delete()
     return jsonify({"message": "Profile deleted successfully"}), 200
 
 
